@@ -32,7 +32,9 @@ const REPORT_FILE = 'build-report.txt';
 const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 const ESC_RE = /[&<>"']/g;
 /** `text` with & < > " and ' escaped. */
+const ESC_TEST = /[&<>"']/;
 function escapeHtml(text) {
+  if (!ESC_TEST.test(text)) return text;
   return text.replace(ESC_RE, (c) => ESCAPES[c]);
 }
 
@@ -202,7 +204,14 @@ const BULLET = /^[-*] (.*)$/;
 const ORDERED = /^(\d{1,9})\. (.*)$/;
 const CONTINUED = /^ {2,}\S/;
 
-const trimLine = (line) => line.replace(/^[ \t]+|[ \t]+$/g, '');
+const trimLine = (line) => {
+  const n = line.length;
+  if (n === 0) return line;
+  const a = line.charCodeAt(0);
+  const b = line.charCodeAt(n - 1);
+  if (a !== 32 && a !== 9 && b !== 32 && b !== 9) return line;
+  return line.replace(/^[ \t]+|[ \t]+$/g, '');
+};
 
 /** Whether `line` is blank (spaces and tabs only). The caller already knows it is not ''. */
 const isBlank = (line) => {
@@ -374,8 +383,11 @@ function renderMarkdown(lines, start, env) {
       continue;
     }
     const c0 = line.charCodeAt(0);
-    if (c0 === 96 && FENCE_OPEN.test(line)) { // '`' fence
+    if (c0 === 96) { // '`' fence
       const fence = FENCE_OPEN.exec(line);
+      if (fence === null) {
+        // not a fence: fall through to the paragraph branch below
+      } else {
       const lang = fence[1];
       const body = [];
       i++;
@@ -384,6 +396,7 @@ function renderMarkdown(lines, start, env) {
       const cls = lang === '' ? '' : ` class="language-${lang}"`;
       blocks.push(body.length === 0 ? `<pre><code${cls}></code></pre>\n` : `<pre><code${cls}>${escapeHtml(body.join('\n'))}\n</code></pre>\n`);
       continue;
+      }
     }
     const heading = headingOf(line);
     if (heading !== null) {
@@ -410,9 +423,9 @@ function renderMarkdown(lines, start, env) {
       const kept = body.filter((l) => l !== '');
       if (kept.length === 0) blocks.push('<blockquote>\n</blockquote>\n');
       else {
-        const parts = [];
-        inlineTo(kept.join('\n'), env, parts);
-        blocks.push(`<blockquote>\n<p>${parts.join('')}</p>\n</blockquote>\n`);
+        blocks.push('<blockquote>\n<p>');
+        inlineTo(kept.join('\n'), env, blocks);
+        blocks.push('</p>\n</blockquote>\n');
       }
       continue;
     }
@@ -435,23 +448,28 @@ function renderMarkdown(lines, start, env) {
       const tag = isOrdered ? 'ol' : 'ul';
       const startNum = isOrdered ? Number(ordered[1]) : 1;
       const open = isOrdered && startNum !== 1 ? `<ol start="${startNum}">` : `<${tag}>`;
-      let html = `${open}\n`;
+      blocks.push(`${open}\n`);
       for (const item of items) {
-        const parts = [];
-        inlineTo(item.join('\n'), env, parts);
-        html += `<li>${parts.join('')}</li>\n`;
+        blocks.push('<li>');
+        inlineTo(item.join('\n'), env, blocks);
+        blocks.push('</li>\n');
       }
-      blocks.push(`${html}</${tag}>\n`);
+      blocks.push(`</${tag}>\n`);
       continue;
     }
     const body = [trimLine(line)];
     i++;
     while (i < n && !endsParagraph(lines[i])) body.push(trimLine(lines[i++]));
-    const parts = [];
-    inlineTo(body.join('\n'), env, parts);
-    const html = parts.join('');
-    if (excerpt === null) excerpt = html;
-    blocks.push(`<p>${html}</p>\n`);
+    if (excerpt === null) {
+      const parts = [];
+      inlineTo(body.join('\n'), env, parts);
+      excerpt = parts.join('');
+      blocks.push(`<p>${excerpt}</p>\n`);
+    } else {
+      blocks.push('<p>');
+      inlineTo(body.join('\n'), env, blocks);
+      blocks.push('</p>\n');
+    }
   }
   return { html: blocks.join(''), toc, excerpt: excerpt ?? '', words };
 }
